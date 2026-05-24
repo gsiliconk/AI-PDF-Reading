@@ -1,0 +1,9 @@
+/// <reference types="vite/client" />
+
+declare namespace NodeJS {
+  interface ProcessEnv {
+    NODE_ENV: 'development' | 'production'
+    DIST: string
+    VITE_PUBLIC: string
+  }
+}

@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+dist/
+release/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Electron
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+*.snap
+*.exe
+*.msi
+*.nupkg
