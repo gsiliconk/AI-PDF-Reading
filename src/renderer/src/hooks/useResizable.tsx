@@ -25,6 +25,8 @@ export function useResizable({ initialWidth, minWidth, maxWidth, direction }: Us
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
       if (!isDragging.current || !containerRef.current) return
+      // 鼠标移出窗口后松开时 mouseup 不会触发，在此检测并清理
+      if (e.buttons === 0) { onMouseUp(); return }
 
       const delta = direction === 'right'
         ? e.clientX - startXRef.current
