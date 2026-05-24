@@ -38,6 +38,22 @@ export default function PDFViewer({
   const programmaticTargetRef = useRef<number | null>(null)
   const programmaticTimerRef = useRef<NodeJS.Timeout | null>(null)
   const [searchMatches, setSearchMatches] = useState<SearchMatch[]>([])
+  const [pageSizes, setPageSizes] = useState<Map<number, { width: number; height: number }>>(new Map())
+
+  // 预加载所有页面尺寸，让未渲染页面也有正确占位高度
+  useEffect(() => {
+    if (!pdfDocument) return
+    const loadSizes = async () => {
+      const sizes = new Map<number, { width: number; height: number }>()
+      for (let i = 1; i <= pdfDocument.numPages; i++) {
+        const page = await pdfDocument.getPage(i)
+        const vp = page.getViewport({ scale })
+        sizes.set(i, { width: vp.width, height: vp.height })
+      }
+      setPageSizes(new Map(sizes))
+    }
+    loadSizes()
+  }, [pdfDocument, scale])
 
   const renderPage = useCallback(async (pageNum: number) => {
     if (!pdfDocument || renderingPages.current.has(pageNum)) return
@@ -310,7 +326,13 @@ export default function PDFViewer({
                 }
               }}
               data-page={pageNum}
-              style={{ display: 'block', borderRadius: '12px' }}
+              style={{
+                display: 'block',
+                borderRadius: '12px',
+                // 占位尺寸：未渲染时保持正确高度，渲染后由 renderPage 覆盖
+                width: pageSizes.get(pageNum) ? `${pageSizes.get(pageNum)!.width}px` : '600px',
+                height: pageSizes.get(pageNum) ? `${pageSizes.get(pageNum)!.height}px` : '800px',
+              }}
             />
             {/* 搜索高亮层 */}
             {getPageHighlights(pageNum).map((rect, i) => {
