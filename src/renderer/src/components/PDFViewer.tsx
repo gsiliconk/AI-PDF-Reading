@@ -35,7 +35,8 @@ export default function PDFViewer({
   const observerRef = useRef<IntersectionObserver | null>(null)
   const isScrollingRef = useRef(false)
   const scrollTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const skipScrollDetectionRef = useRef(false)
+  const programmaticTargetRef = useRef<number | null>(null)
+  const programmaticTimerRef = useRef<NodeJS.Timeout | null>(null)
   const [searchMatches, setSearchMatches] = useState<SearchMatch[]>([])
 
   const renderPage = useCallback(async (pageNum: number) => {
@@ -105,11 +106,13 @@ export default function PDFViewer({
     if (!container || !pdfDocument) return
 
     const handleScroll = () => {
-      if (skipScrollDetectionRef.current) return
       isScrollingRef.current = true
 
       if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current)
       scrollTimerRef.current = setTimeout(() => {
+        // 程序化跳转期间，scroll 检测不覆盖目标页
+        if (programmaticTargetRef.current !== null) return
+
         const scrollTop = container.scrollTop
         const containerHeight = container.clientHeight
         const scrollCenter = scrollTop + containerHeight / 3
@@ -143,18 +146,28 @@ export default function PDFViewer({
     }
   }, [pdfDocument, currentPage, onPageChange])
 
-  // 大纲/缩略图点击时自动滚动
+  // 大纲/缩略图点击时自动滚动（精确定位，不用 scrollIntoView 动画）
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
 
-    const pageElement = container.querySelector(`[data-page="${currentPage}"]`)
-    if (pageElement) {
-      skipScrollDetectionRef.current = true
-      isScrollingRef.current = false
-      pageElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      setTimeout(() => { skipScrollDetectionRef.current = false }, 800)
-    }
+    const pageElement = container.querySelector(`[data-page="${currentPage}"]`) as HTMLElement
+    if (!pageElement) return
+
+    // 记录目标页，阻止 scroll 检测覆盖
+    programmaticTargetRef.current = currentPage
+    if (programmaticTimerRef.current) clearTimeout(programmaticTimerRef.current)
+
+    // 直接设置 scrollTop，精确且无动画抖动
+    const containerRect = container.getBoundingClientRect()
+    const pageRect = pageElement.getBoundingClientRect()
+    const offset = pageRect.top - containerRect.top + container.scrollTop - 24
+    container.scrollTop = offset
+
+    // 滚动完成后解锁（instant 跳转无需等待）
+    programmaticTimerRef.current = setTimeout(() => {
+      programmaticTargetRef.current = null
+    }, 100)
   }, [currentPage])
 
   // 搜索：提取所有页面文本并找到匹配位置
