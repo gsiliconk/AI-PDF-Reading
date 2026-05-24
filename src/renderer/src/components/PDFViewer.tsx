@@ -158,11 +158,14 @@ export default function PDFViewer({
     programmaticTargetRef.current = currentPage
     if (programmaticTimerRef.current) clearTimeout(programmaticTimerRef.current)
 
-    // 直接设置 scrollTop，精确且无动画抖动
-    const containerRect = container.getBoundingClientRect()
-    const pageRect = pageElement.getBoundingClientRect()
-    const offset = pageRect.top - containerRect.top + container.scrollTop - 24
-    container.scrollTop = offset
+    // 用 offsetTop 计算元素在容器内的绝对位置，不受当前滚动位置影响
+    let offsetTop = 0
+    let el: HTMLElement | null = pageElement
+    while (el && el !== container) {
+      offsetTop += el.offsetTop
+      el = el.offsetParent as HTMLElement | null
+    }
+    container.scrollTop = offsetTop - 24
 
     // 滚动完成后解锁（instant 跳转无需等待）
     programmaticTimerRef.current = setTimeout(() => {
