@@ -7,6 +7,9 @@ interface OutlineItem {
   title: string
   dest: any
   items?: OutlineItem[]
+  pageIndex?: number
+  startPage?: number
+  endPage?: number
 }
 
 interface SidebarProps {
@@ -31,12 +34,49 @@ export default function Sidebar({ pdfDocument, currentPage, onPageChange, isOpen
     direction: 'right',
   })
 
+  const outlineRef = useRef<HTMLDivElement>(null)
+
+  const resolveOutlinePage = async (dest: any): Promise<number> => {
+    if (!pdfDocument) return 0
+    try {
+      let pageRef: any
+      if (typeof dest === 'string') {
+        const d = await pdfDocument.getDestination(dest)
+        if (d) pageRef = d[0]
+      } else if (Array.isArray(dest)) {
+        pageRef = dest[0]
+      }
+      if (pageRef == null) return 0
+      if (typeof pageRef === 'number') return pageRef + 1
+      return (await pdfDocument.getPageIndex(pageRef)) + 1
+    } catch { return 0 }
+  }
+
+  const resolveOutlinePages = async (items: OutlineItem[]): Promise<OutlineItem[]> => {
+    const resolved: OutlineItem[] = []
+    for (const item of items) {
+      const pageIndex = await resolveOutlinePage(item.dest)
+      const children = item.items ? await resolveOutlinePages(item.items) : []
+      const childPages = children.filter(c => c.startPage && c.startPage > 0).map(c => c.startPage!)
+      const allPages = [pageIndex, ...childPages].filter(p => p > 0)
+      const startPage = allPages.length ? Math.min(...allPages) : pageIndex
+      const endPage = allPages.length ? Math.max(...allPages) : pageIndex
+      resolved.push({ ...item, pageIndex, startPage, endPage, items: children })
+    }
+    return resolved
+  }
+
   useEffect(() => {
     if (!pdfDocument || !isOpen) return
     const loadOutline = async () => {
       try {
         const outlineData = await pdfDocument.getOutline()
-        setOutline(outlineData || [])
+        if (outlineData?.length) {
+          const resolved = await resolveOutlinePages(outlineData)
+          setOutline(resolved)
+        } else {
+          setOutline([])
+        }
       } catch (error) {
         console.error('加载大纲失败:', error)
       }
@@ -109,33 +149,70 @@ export default function Sidebar({ pdfDocument, currentPage, onPageChange, isOpen
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }, [currentPage, isOpen, activeTab])
 
-  const renderOutlineItem = (item: OutlineItem, depth: number = 0) => (
-    <div key={item.title} style={{ paddingLeft: `${depth * 16}px` }}>
-      <button
-        onClick={() => handleOutlineClick(item.dest)}
-        style={{
-          display: 'block',
-          width: '100%',
-          textAlign: 'left',
-          padding: '8px 12px',
-          fontSize: '13px',
-          color: '#725d42',
-          background: 'transparent',
-          border: 'none',
-          borderRadius: '8px',
-          cursor: 'pointer',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-        onMouseEnter={(e) => e.currentTarget.style.background = '#f0e8d8'}
-        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+  const isCurrentOutline = (item: OutlineItem): boolean => {
+    if (item.startPage && item.endPage) {
+      return currentPage >= item.startPage && currentPage <= item.endPage
+    }
+    if (item.pageIndex) return currentPage === item.pageIndex
+    return false
+  }
+
+  const outlineItemRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+
+  useEffect(() => {
+    if (activeTab !== 'outline' || !isOpen) return
+    const activeItem = outline.find(item => isCurrentOutline(item))
+    if (activeItem) {
+      const el = outlineItemRefs.current.get(activeItem.title)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [currentPage, activeTab, isOpen])
+
+  const renderOutlineItem = (item: OutlineItem, depth: number = 0) => {
+    const isActive = isCurrentOutline(item)
+    return (
+      <div
+        key={item.title}
+        ref={(el) => { if (el) outlineItemRefs.current.set(item.title, el) }}
+        style={{ paddingLeft: `${depth * 16}px` }}
       >
-        {item.title}
-      </button>
-      {item.items?.map(child => renderOutlineItem(child, depth + 1))}
-    </div>
-  )
+        <button
+          onClick={() => handleOutlineClick(item.dest)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            width: '100%',
+            textAlign: 'left',
+            padding: '8px 12px',
+            fontSize: '13px',
+            color: isActive ? '#19c8b9' : '#725d42',
+            fontWeight: isActive ? 'bold' : 'normal',
+            background: isActive ? '#e6f9f6' : 'transparent',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+          onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = '#f0e8d8' }}
+          onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
+        >
+          {isActive && (
+            <span style={{ fontSize: '10px', flexShrink: 0 }}>▶</span>
+          )}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.title}</span>
+          {item.startPage && (
+            <span style={{ fontSize: '11px', color: '#c4b89e', marginLeft: 'auto', flexShrink: 0 }}>
+              P{item.startPage}
+            </span>
+          )}
+        </button>
+        {item.items?.map(child => renderOutlineItem(child, depth + 1))}
+      </div>
+    )
+  }
 
   if (!isOpen) {
     return (

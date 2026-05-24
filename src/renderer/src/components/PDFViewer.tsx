@@ -35,6 +35,7 @@ export default function PDFViewer({
   const observerRef = useRef<IntersectionObserver | null>(null)
   const isScrollingRef = useRef(false)
   const scrollTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const skipScrollDetectionRef = useRef(false)
   const [searchMatches, setSearchMatches] = useState<SearchMatch[]>([])
 
   const renderPage = useCallback(async (pageNum: number) => {
@@ -104,6 +105,7 @@ export default function PDFViewer({
     if (!container || !pdfDocument) return
 
     const handleScroll = () => {
+      if (skipScrollDetectionRef.current) return
       isScrollingRef.current = true
 
       if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current)
@@ -144,11 +146,14 @@ export default function PDFViewer({
   // 大纲/缩略图点击时自动滚动
   useEffect(() => {
     const container = containerRef.current
-    if (!container || isScrollingRef.current) return
+    if (!container) return
 
     const pageElement = container.querySelector(`[data-page="${currentPage}"]`)
     if (pageElement) {
+      skipScrollDetectionRef.current = true
+      isScrollingRef.current = false
       pageElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setTimeout(() => { skipScrollDetectionRef.current = false }, 800)
     }
   }, [currentPage])
 
