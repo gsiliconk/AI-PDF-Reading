@@ -1,6 +1,12 @@
 # Dependencies
 node_modules/
 
+# Workflow
+.spec-workflow/
+
+# Local scripts
+*.bat
+
 # Build output
 out/
 dist/
