@@ -164,6 +164,7 @@ export default function AIPanel({ isOpen, onToggle, pdfDocument, currentPage }: 
         width: '100%', borderRadius: 0, margin: 0,
         display: 'flex', flexDirection: 'column',
         borderLeft: '2px solid #e8e2d6', flexShrink: 0, position: 'relative',
+        cursor: 'default',
       }}>
         {resizeHandle}
 
