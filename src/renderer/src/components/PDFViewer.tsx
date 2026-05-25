@@ -242,7 +242,7 @@ export default function PDFViewer({
     searchAllPages()
   }, [searchQuery, pdfDocument, scale, onSearchResults])
 
-  // 跳转到当前搜索匹配项所在页面
+  // 跳转到当前搜索匹配项所在页面并滚动到匹配位置
   useEffect(() => {
     if (searchMatches.length === 0 || searchMatchIndex <= 0) return
 
@@ -250,7 +250,33 @@ export default function PDFViewer({
     for (const match of searchMatches) {
       count += match.rects.length
       if (count >= searchMatchIndex) {
+        const localIdx = searchMatchIndex - (count - match.rects.length) - 1
+        const rect = match.rects[localIdx]
+
         onPageChange(match.page)
+
+        // 滚动到匹配项位置
+        const container = containerRef.current
+        if (!container || !rect) break
+
+        programmaticTargetRef.current = match.page
+        if (programmaticTimerRef.current) clearTimeout(programmaticTimerRef.current)
+
+        // 先跳转到页面，然后定位到匹配项
+        requestAnimationFrame(() => {
+          const pageElement = container.querySelector(`[data-page="${match.page}"]`) as HTMLElement
+          if (!pageElement) return
+
+          const containerRect = container.getBoundingClientRect()
+          const pageRect = pageElement.getBoundingClientRect()
+          // 页面顶部位置 + 匹配项在页面内的 y 坐标 - 容器 1/3 高度（让匹配项在屏幕中间偏上）
+          const scrollTo = pageRect.top - containerRect.top + container.scrollTop + rect.y - container.clientHeight / 3
+          container.scrollTop = scrollTo
+
+          programmaticTimerRef.current = setTimeout(() => {
+            programmaticTargetRef.current = null
+          }, 100)
+        })
         break
       }
     }
