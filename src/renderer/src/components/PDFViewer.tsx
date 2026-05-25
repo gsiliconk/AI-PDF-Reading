@@ -174,14 +174,11 @@ export default function PDFViewer({
     programmaticTargetRef.current = currentPage
     if (programmaticTimerRef.current) clearTimeout(programmaticTimerRef.current)
 
-    // 用 offsetTop 计算元素在容器内的绝对位置，不受当前滚动位置影响
-    let offsetTop = 0
-    let el: HTMLElement | null = pageElement
-    while (el && el !== container) {
-      offsetTop += el.offsetTop
-      el = el.offsetParent as HTMLElement | null
-    }
-    container.scrollTop = offsetTop - 24
+    // 用 getBoundingClientRect 计算精确位置
+    const containerRect = container.getBoundingClientRect()
+    const pageRect = pageElement.getBoundingClientRect()
+    const offsetTop = pageRect.top - containerRect.top + container.scrollTop - 24
+    container.scrollTop = offsetTop
 
     // 滚动完成后解锁（instant 跳转无需等待）
     programmaticTimerRef.current = setTimeout(() => {
@@ -218,9 +215,10 @@ export default function PDFViewer({
               // 将 PDF 坐标转换为视口坐标
               const tx = pdfjsLib.Util.transform(viewport.transform, item.transform)
               const charWidth = item.width / (item.str.length || 1)
-              const x = tx[4] + idx * charWidth * (viewport.scale / scale)
+              // tx[4], tx[5] 已经是变换后的坐标，charWidth 需要乘以 viewport.scale
+              const x = tx[4] + idx * charWidth * viewport.scale
               const y = tx[5] - item.height * viewport.scale
-              const w = query.length * charWidth * (viewport.scale / scale)
+              const w = query.length * charWidth * viewport.scale
               const h = item.height * viewport.scale
 
               pageMatches.push({ x, y, width: w, height: h })
@@ -252,7 +250,6 @@ export default function PDFViewer({
     for (const match of searchMatches) {
       count += match.rects.length
       if (count >= searchMatchIndex) {
-        isScrollingRef.current = false
         onPageChange(match.page)
         break
       }
