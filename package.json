@@ -57,7 +57,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "deleteAppDataOnUninstall": false,
-      "artifactName": "PDF Smart Reader Setup.exe"
+      "artifactName": "PDF-Smart-Reader-Setup.exe"
     }
   }
 }
