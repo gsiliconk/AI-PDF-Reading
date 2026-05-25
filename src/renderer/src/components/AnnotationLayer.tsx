@@ -1,7 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { Button, Card, Icon, Input } from 'animal-island-ui'
+import { Card, Input, Button } from 'animal-island-ui'
+import * as pdfjsLib from 'pdfjs-dist'
+import { hashFilePath } from '../utils/hash'
 
-interface Annotation {
+export interface Annotation {
   id: string
   type: 'highlight' | 'underline' | 'note'
   color: string
@@ -19,91 +21,117 @@ interface AnnotationLayerProps {
   page: number
   filePath?: string
   containerRef: React.RefObject<HTMLDivElement>
+  pdfDocument?: pdfjsLib.PDFDocumentProxy
+  selectedTool: 'highlight' | 'underline' | 'note' | 'delete' | null
+  selectedColor: string
+  onToolUsed?: () => void
+  scale?: number
+  perPageLimit?: number
 }
 
-export default function AnnotationLayer({ page, filePath = '', containerRef }: AnnotationLayerProps) {
+export default function AnnotationLayer({
+  page, filePath = '', containerRef, pdfDocument,
+  selectedTool, selectedColor, onToolUsed, scale = 1.5, perPageLimit = 50,
+}: AnnotationLayerProps) {
   const [annotations, setAnnotations] = useState<Annotation[]>([])
-  const [selectedTool, setSelectedTool] = useState<'highlight' | 'underline' | 'note' | null>(null)
-  const [selectedColor, setSelectedColor] = useState('#f5c31c')
   const [isDrawing, setIsDrawing] = useState(false)
   const [startPos, setStartPos] = useState({ x: 0, y: 0 })
   const [currentAnnotation, setCurrentAnnotation] = useState<Partial<Annotation> | null>(null)
   const [editingNote, setEditingNote] = useState<string | null>(null)
   const [noteText, setNoteText] = useState('')
-  const layerRef = useRef<HTMLDivElement>(null)
 
-  const colors = [
-    { name: '黄色', value: '#f5c31c' },
-    { name: '绿色', value: '#6fba2c' },
-    { name: '蓝色', value: '#19c8b9' },
-    { name: '粉色', value: '#f8a6b2' },
-    { name: '橙色', value: '#e59266' },
-  ]
+  const loadedRef = useRef(false)
 
-  // 从本地存储加载标注
+  // 从 electron-store 加载
   useEffect(() => {
-    const key = `annotations-${filePath}-${page}`
-    const saved = localStorage.getItem(key)
-    if (saved) {
-      setAnnotations(JSON.parse(saved))
-    } else {
-      setAnnotations([])
+    loadedRef.current = false
+    if (!filePath) { setAnnotations([]); return }
+    const load = async () => {
+      const hash = await hashFilePath(filePath)
+      const key = `annotations.${hash}.${page}`
+      const saved = await window.electronAPI.storeGet(key)
+      setAnnotations(Array.isArray(saved) ? saved : [])
+      loadedRef.current = true
     }
+    load()
   }, [page, filePath])
 
-  // 保存标注到本地存储
-  useEffect(() => {
-    const key = `annotations-${filePath}-${page}`
-    localStorage.setItem(key, JSON.stringify(annotations))
-  }, [annotations, page, filePath])
+  const notifyChange = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('annotations-changed', { detail: { filePath } }))
+  }, [filePath])
 
-  // 获取鼠标相对于容器的位置
+  // 保存到 electron-store
+  useEffect(() => {
+    if (!loadedRef.current || !filePath) return
+    const save = async () => {
+      const hash = await hashFilePath(filePath)
+      const key = `annotations.${hash}.${page}`
+      await window.electronAPI.storeSet(key, annotations)
+      notifyChange()
+    }
+    save()
+  }, [annotations, page, filePath, notifyChange])
+
+  // 监听外部删除事件（从笔记面板删除）
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { filePath: fp, annotationId, annotationPage } = (e as CustomEvent).detail
+      if (fp === filePath && annotationPage === page) {
+        setAnnotations(prev => prev.filter(a => a.id !== annotationId))
+      }
+    }
+    window.addEventListener('delete-annotation', handler)
+    return () => window.removeEventListener('delete-annotation', handler)
+  }, [filePath, page])
+
+  const extractText = useCallback(async (x: number, y: number, width: number, height: number): Promise<string> => {
+    if (!pdfDocument) return ''
+    try {
+      const pdfPage = await pdfDocument.getPage(page)
+      const viewport = pdfPage.getViewport({ scale })
+      const textContent = await pdfPage.getTextContent()
+      const parts: string[] = []
+      for (const item of textContent.items as any[]) {
+        if (!item.str) continue
+        const tx = pdfjsLib.Util.transform(viewport.transform, item.transform)
+        const itemX = tx[4]
+        const itemY = tx[5] - item.height * scale
+        const itemW = item.width * scale
+        const itemH = item.height * scale
+        const ox = Math.max(0, Math.min(itemX + itemW, x + width) - Math.max(itemX, x))
+        const oy = Math.max(0, Math.min(itemY + itemH, y + height) - Math.max(itemY, y))
+        if (ox > 0 && oy > 0 && (ox * oy) / (itemW * itemH) > 0.3) {
+          parts.push(item.str)
+        }
+      }
+      return parts.join(' ').trim().slice(0, 200)
+    } catch { return '' }
+  }, [pdfDocument, page, scale])
+
   const getRelativePos = useCallback((e: React.MouseEvent) => {
     if (!containerRef.current) return { x: 0, y: 0 }
     const rect = containerRef.current.getBoundingClientRect()
-    return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-    }
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top }
   }, [containerRef])
 
-  // 开始绘制
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!selectedTool) return
-
+    if (!selectedTool || selectedTool === 'delete') return
     const pos = getRelativePos(e)
     setIsDrawing(true)
     setStartPos(pos)
-
-    if (selectedTool === 'note') {
-      setCurrentAnnotation({
-        type: 'note',
-        color: selectedColor,
-        page,
-        x: pos.x,
-        y: pos.y,
-        width: 200,
-        height: 150,
-        text: '',
-      })
-    } else {
-      setCurrentAnnotation({
-        type: selectedTool,
-        color: selectedColor,
-        page,
-        x: pos.x,
-        y: pos.y,
-        width: 0,
-        height: 0,
-        text: '',
-      })
-    }
+    setCurrentAnnotation({
+      type: selectedTool,
+      color: selectedColor,
+      page,
+      x: pos.x, y: pos.y,
+      width: selectedTool === 'note' ? 200 : 0,
+      height: selectedTool === 'note' ? 150 : 0,
+      text: '',
+    })
   }, [selectedTool, selectedColor, page, getRelativePos])
 
-  // 绘制中
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!isDrawing || !currentAnnotation || selectedTool === 'note') return
-
+    if (!isDrawing || !currentAnnotation || selectedTool === 'note' || selectedTool === 'delete') return
     const pos = getRelativePos(e)
     setCurrentAnnotation(prev => ({
       ...prev,
@@ -114,67 +142,70 @@ export default function AnnotationLayer({ page, filePath = '', containerRef }: A
     }))
   }, [isDrawing, currentAnnotation, selectedTool, startPos, getRelativePos])
 
-  // 结束绘制
-  const handleMouseUp = useCallback(() => {
+  const handleMouseUp = useCallback(async () => {
     if (!isDrawing || !currentAnnotation) return
-
     if (selectedTool === 'note') {
       setEditingNote('new')
       setNoteText('')
     } else if (currentAnnotation.width && currentAnnotation.width > 5) {
-      const newAnnotation: Annotation = {
+      if (annotations.length >= perPageLimit) {
+        // 超过单页上限，提示并取消
+        console.warn(`已达到单页批注上限 (${perPageLimit})`)
+        alert(`已达到单页批注上限（${perPageLimit}），请在「设置 → 批注与笔记」中调整。`)
+        setIsDrawing(false)
+        setCurrentAnnotation(null)
+        return
+      }
+      const { x = 0, y = 0, width: w = 0 } = currentAnnotation
+      const h = currentAnnotation.height || 20
+      const text = await extractText(x, y, w, h)
+      setAnnotations(prev => [...prev, {
         id: Date.now().toString(),
         type: currentAnnotation.type as 'highlight' | 'underline',
         color: currentAnnotation.color || selectedColor,
-        page,
-        x: currentAnnotation.x || 0,
-        y: currentAnnotation.y || 0,
-        width: currentAnnotation.width || 0,
-        height: currentAnnotation.height || 20,
-        text: '',
+        page, x, y, width: w, height: h, text,
         timestamp: Date.now(),
-      }
-      setAnnotations(prev => [...prev, newAnnotation])
+      }])
+      onToolUsed?.()
     }
-
     setIsDrawing(false)
     setCurrentAnnotation(null)
-  }, [isDrawing, currentAnnotation, selectedTool, selectedColor, page])
+  }, [isDrawing, currentAnnotation, selectedTool, selectedColor, page, extractText, onToolUsed, annotations.length, perPageLimit])
 
-  // 保存笔记
   const handleSaveNote = useCallback(() => {
     if (!currentAnnotation || !noteText.trim()) {
-      setEditingNote(null)
-      setCurrentAnnotation(null)
+      setEditingNote(null); setCurrentAnnotation(null); return
+    }
+    if (annotations.length >= perPageLimit) {
+      alert(`已达到单页批注上限（${perPageLimit}），请在「设置 → 批注与笔记」中调整。`)
+      setEditingNote(null); setCurrentAnnotation(null); setNoteText('')
       return
     }
-
-    const newAnnotation: Annotation = {
+    setAnnotations(prev => [...prev, {
       id: Date.now().toString(),
       type: 'note',
       color: currentAnnotation.color || selectedColor,
       page,
       x: currentAnnotation.x || 0,
       y: currentAnnotation.y || 0,
-      width: 200,
-      height: 150,
+      width: 200, height: 150,
       text: '',
       comment: noteText.trim(),
       timestamp: Date.now(),
+    }])
+    setEditingNote(null); setCurrentAnnotation(null); setNoteText('')
+    onToolUsed?.()
+  }, [currentAnnotation, noteText, selectedColor, page, onToolUsed, annotations.length, perPageLimit])
+
+  const handleAnnotationClick = useCallback((e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    if (selectedTool === 'delete') {
+      setAnnotations(prev => prev.filter(a => a.id !== id))
     }
+  }, [selectedTool])
 
-    setAnnotations(prev => [...prev, newAnnotation])
-    setEditingNote(null)
-    setCurrentAnnotation(null)
-    setNoteText('')
-  }, [currentAnnotation, noteText, selectedColor, page])
+  const isInteractive = selectedTool !== null
 
-  // 删除标注
-  const handleDeleteAnnotation = useCallback((id: string) => {
-    setAnnotations(prev => prev.filter(a => a.id !== id))
-  }, [])
-
-  // 渲染标注
   const renderAnnotation = (annotation: Annotation) => {
     const style: React.CSSProperties = {
       position: 'absolute',
@@ -182,152 +213,88 @@ export default function AnnotationLayer({ page, filePath = '', containerRef }: A
       top: `${annotation.y}px`,
       width: `${annotation.width}px`,
       height: `${annotation.height}px`,
-      cursor: 'pointer',
+      cursor: selectedTool === 'delete' ? 'pointer' : 'default',
+      pointerEvents: 'auto',
     }
 
     if (annotation.type === 'highlight') {
       return (
-        <div
-          key={annotation.id}
-          style={{
-            ...style,
-            background: `${annotation.color}40`,
-            border: `2px solid ${annotation.color}`,
-            borderRadius: '4px',
-          }}
-          onClick={() => handleDeleteAnnotation(annotation.id)}
-          title="点击删除"
+        <div key={annotation.id} style={{
+          ...style,
+          background: `${annotation.color}40`,
+          border: selectedTool === 'delete' ? `2px dashed ${annotation.color}` : `2px solid ${annotation.color}`,
+          borderRadius: '4px',
+          outline: selectedTool === 'delete' ? '2px solid rgba(255,0,0,0.3)' : 'none',
+        }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => handleAnnotationClick(e, annotation.id)}
+          title={selectedTool === 'delete' ? '点击删除' : (annotation.text || '')}
         />
       )
     }
 
     if (annotation.type === 'underline') {
       return (
-        <div
-          key={annotation.id}
-          style={{
-            ...style,
-            borderBottom: `3px solid ${annotation.color}`,
-          }}
-          onClick={() => handleDeleteAnnotation(annotation.id)}
-          title="点击删除"
+        <div key={annotation.id} style={{
+          ...style,
+          borderBottom: `3px solid ${annotation.color}`,
+          outline: selectedTool === 'delete' ? '2px solid rgba(255,0,0,0.3)' : 'none',
+        }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => handleAnnotationClick(e, annotation.id)}
+          title={selectedTool === 'delete' ? '点击删除' : (annotation.text || '')}
         />
       )
     }
 
     if (annotation.type === 'note') {
       return (
-        <div
-          key={annotation.id}
-          style={{
-            ...style,
-            background: '#f8f8f0',
-            border: `2px solid ${annotation.color}`,
-            borderRadius: '12px',
-            padding: '8px',
-            fontSize: '12px',
-            color: '#725d42',
-            overflow: 'auto',
-          }}
+        <div key={annotation.id} style={{
+          ...style,
+          background: '#f8f8f0',
+          border: selectedTool === 'delete' ? `2px dashed red` : `2px solid ${annotation.color}`,
+          borderRadius: '12px',
+          padding: '8px',
+          fontSize: '12px',
+          color: '#725d42',
+          overflow: 'auto',
+        }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => handleAnnotationClick(e, annotation.id)}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
             <span style={{ fontWeight: 'bold', color: annotation.color }}>批注</span>
-            <button
-              onClick={() => handleDeleteAnnotation(annotation.id)}
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                color: '#9f927d',
-                padding: 0,
-              }}
-            >
-              ✕
-            </button>
+            {selectedTool !== 'delete' && (
+              <button onClick={(e) => { e.stopPropagation(); setAnnotations(prev => prev.filter(a => a.id !== annotation.id)) }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9f927d', padding: 0 }}>
+                ✕
+              </button>
+            )}
           </div>
           <div>{annotation.comment}</div>
         </div>
       )
     }
-
     return null
   }
 
   return (
     <>
-      {/* 工具栏 */}
-      <div style={{
-        position: 'absolute',
-        top: '8px',
-        left: '8px',
-        zIndex: 30,
-        display: 'flex',
-        gap: '4px',
-      }}>
-        <Button
-          type={selectedTool === 'highlight' ? 'primary' : 'default'}
-          size="small"
-          onClick={() => setSelectedTool(selectedTool === 'highlight' ? null : 'highlight')}
-        >
-          高亮
-        </Button>
-        <Button
-          type={selectedTool === 'underline' ? 'primary' : 'default'}
-          size="small"
-          onClick={() => setSelectedTool(selectedTool === 'underline' ? null : 'underline')}
-        >
-          下划线
-        </Button>
-        <Button
-          type={selectedTool === 'note' ? 'primary' : 'default'}
-          size="small"
-          onClick={() => setSelectedTool(selectedTool === 'note' ? null : 'note')}
-        >
-          批注
-        </Button>
-        {selectedTool && (
-          <div style={{ display: 'flex', gap: '2px', marginLeft: '8px' }}>
-            {colors.map(color => (
-              <button
-                key={color.value}
-                onClick={() => setSelectedColor(color.value)}
-                style={{
-                  width: '20px',
-                  height: '20px',
-                  borderRadius: '50%',
-                  background: color.value,
-                  border: selectedColor === color.value ? '2px solid #725d42' : '2px solid transparent',
-                  cursor: 'pointer',
-                  padding: 0,
-                }}
-                title={color.name}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-
       {/* 标注层 */}
       <div
-        ref={layerRef}
         style={{
           position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          pointerEvents: selectedTool ? 'auto' : 'none',
-          cursor: selectedTool ? 'crosshair' : 'default',
+          top: 0, left: 0, right: 0, bottom: 0,
+          pointerEvents: isInteractive ? 'auto' : 'none',
+          cursor: selectedTool === 'delete' ? 'default' : (selectedTool ? 'crosshair' : 'default'),
         }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
       >
-        {/* 已有标注 */}
         {annotations.map(renderAnnotation)}
 
-        {/* 当前正在绘制的标注 */}
-        {isDrawing && currentAnnotation && selectedTool !== 'note' && (
+        {isDrawing && currentAnnotation && selectedTool !== 'note' && selectedTool !== 'delete' && (
           <div style={{
             position: 'absolute',
             left: `${currentAnnotation.x}px`,
@@ -341,35 +308,31 @@ export default function AnnotationLayer({ page, filePath = '', containerRef }: A
         )}
       </div>
 
-      {/* 笔记输入弹窗 */}
+      {/* 批注输入弹窗 */}
       {editingNote && (
         <div style={{
           position: 'absolute',
           left: `${currentAnnotation?.x || 0}px`,
           top: `${currentAnnotation?.y || 0}px`,
           zIndex: 40,
-        }}>
-          <Card style={{ padding: '12px', width: '200px' }}>
+        }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <Card style={{ padding: '12px', width: '220px' }}>
+            <div style={{ fontSize: '12px', color: '#9f927d', marginBottom: '6px' }}>输入批注内容</div>
             <Input
-              placeholder="输入批注内容..."
+              placeholder="批注内容..."
               value={noteText}
               onChange={(e) => setNoteText(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSaveNote()
-                if (e.key === 'Escape') {
-                  setEditingNote(null)
-                  setCurrentAnnotation(null)
-                }
+                if (e.key === 'Enter' && !e.shiftKey) handleSaveNote()
+                if (e.key === 'Escape') { setEditingNote(null); setCurrentAnnotation(null) }
               }}
               style={{ marginBottom: '8px' }}
             />
             <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
-              <Button size="small" onClick={() => { setEditingNote(null); setCurrentAnnotation(null) }}>
-                取消
-              </Button>
-              <Button type="primary" size="small" onClick={handleSaveNote}>
-                保存
-              </Button>
+              <Button size="small" onClick={() => { setEditingNote(null); setCurrentAnnotation(null) }}>取消</Button>
+              <Button type="primary" size="small" onClick={handleSaveNote}>保存</Button>
             </div>
           </Card>
         </div>

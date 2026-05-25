@@ -1,14 +1,23 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron'
 import { join } from 'path'
 import { readFileSync } from 'fs'
+import { request as httpsRequest } from 'https'
 import { is } from '@electron-toolkit/utils'
+import Store from 'electron-store'
+
+const store = new Store()
 
 let mainWindow: BrowserWindow | null = null
 
 function createWindow(): void {
+  const savedBounds = store.get('window.bounds') as { x?: number; y?: number; width?: number; height?: number } | undefined
+  const wasMaximized = store.get('window.isMaximized') as boolean | undefined
+
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: savedBounds?.width || 1280,
+    height: savedBounds?.height || 800,
+    x: savedBounds?.x,
+    y: savedBounds?.y,
     minWidth: 800,
     minHeight: 600,
     show: false,
@@ -57,7 +66,32 @@ function createWindow(): void {
   Menu.setApplicationMenu(menu)
 
   mainWindow.on('ready-to-show', () => {
+    if (wasMaximized) mainWindow?.maximize()
     mainWindow?.show()
+  })
+
+  // 窗口大小/位置记忆
+  let saveBoundsTimer: ReturnType<typeof setTimeout> | null = null
+  const saveBounds = () => {
+    if (saveBoundsTimer) clearTimeout(saveBoundsTimer)
+    saveBoundsTimer = setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      if (!mainWindow.isMaximized()) {
+        store.set('window.bounds', mainWindow.getBounds())
+      }
+      store.set('window.isMaximized', mainWindow.isMaximized())
+    }, 500)
+  }
+  mainWindow.on('resize', saveBounds)
+  mainWindow.on('move', saveBounds)
+  mainWindow.on('maximize', saveBounds)
+  mainWindow.on('unmaximize', saveBounds)
+  mainWindow.on('close', () => {
+    if (saveBoundsTimer) clearTimeout(saveBoundsTimer)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (!mainWindow.isMaximized()) store.set('window.bounds', mainWindow.getBounds())
+      store.set('window.isMaximized', mainWindow.isMaximized())
+    }
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -125,6 +159,19 @@ ipcMain.on('window:maximize', () => {
 })
 ipcMain.on('window:close', () => mainWindow?.close())
 ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false)
+
+// electron-store 存储操作
+ipcMain.handle('store:get', (_event, key: string) => store.get(key))
+ipcMain.handle('store:set', (_event, key: string, value: any) => { store.set(key, value) })
+ipcMain.handle('store:delete', (_event, key: string) => { store.delete(key) })
+
+// 窗口大小记忆
+ipcMain.handle('store:get-window-bounds', () => store.get('window.bounds'))
+ipcMain.handle('store:set-window-bounds', (_event, bounds: { x: number; y: number; width: number; height: number }) => {
+  store.set('window.bounds', bounds)
+})
+ipcMain.handle('store:get-window-maximized', () => store.get('window.isMaximized'))
+ipcMain.handle('store:set-window-maximized', (_event, val: boolean) => { store.set('window.isMaximized', val) })
 
 // AI API 非流式（用于 Function Calling 阶段）
 ipcMain.handle('ai:chat', async (_event, { apiUrl, apiKey, model, messages, tools }: {
@@ -224,6 +271,9 @@ app.whenReady().then(() => {
       createWindow()
     }
   })
+
+  // 启动 3 秒后检查 GitHub 最新 release
+  setTimeout(() => { checkForUpdates() }, 3000)
 })
 
 app.on('window-all-closed', () => {
@@ -231,3 +281,69 @@ app.on('window-all-closed', () => {
     app.quit()
   }
 })
+
+// ============== 自动更新（启动后异步检查 GitHub release） ==============
+const GITHUB_OWNER = 'gsiliconk'
+const GITHUB_REPO = 'AI-PDF-Reading'
+const RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`
+
+/** 三段式版本比较：a > b 返回 1，a < b 返回 -1，相等返回 0；非法格式返回 0 */
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(s => parseInt(s, 10))
+  const pb = b.split('.').map(s => parseInt(s, 10))
+  for (let i = 0; i < 3; i++) {
+    const x = Number.isFinite(pa[i]) ? pa[i] : 0
+    const y = Number.isFinite(pb[i]) ? pb[i] : 0
+    if (x > y) return 1
+    if (x < y) return -1
+  }
+  return 0
+}
+
+function checkForUpdates(): void {
+  try {
+    const req = httpsRequest({
+      method: 'GET',
+      hostname: 'api.github.com',
+      path: `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
+      headers: {
+        'User-Agent': `${GITHUB_REPO}-app`,
+        'Accept': 'application/vnd.github+json',
+      },
+      timeout: 8000,
+    }, (res) => {
+      if (res.statusCode !== 200) {
+        // 静默
+        res.resume()
+        return
+      }
+      let data = ''
+      res.setEncoding('utf-8')
+      res.on('data', (chunk) => { data += chunk })
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data)
+          const tag = typeof json.tag_name === 'string' ? json.tag_name : ''
+          if (!tag) return
+          const latest = tag.replace(/^v/i, '').trim()
+          const current = app.getVersion()
+          if (compareVersions(latest, current) > 0) {
+            mainWindow?.webContents.send('update:available', {
+              latest,
+              current,
+              releasesUrl: RELEASES_URL,
+            })
+          }
+        } catch {
+          // JSON 解析失败：静默
+        }
+      })
+    })
+    req.on('error', () => { /* 静默 */ })
+    req.on('timeout', () => { req.destroy() })
+    req.end()
+  } catch {
+    // 静默
+  }
+}
+

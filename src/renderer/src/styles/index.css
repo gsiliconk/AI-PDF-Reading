@@ -178,3 +178,24 @@ kbd {
   border-top: 1px solid #e8e2d6;
   margin: 12px 0;
 }
+
+/* 深色主题：最小覆盖，仅调整背景与正文颜色 */
+:root[data-theme="dark"] body {
+  background-color: #1f1a14;
+  color: #e8e2d6;
+}
+:root[data-theme="dark"] .markdown-body,
+:root[data-theme="dark"] .markdown-body p,
+:root[data-theme="dark"] .markdown-body strong,
+:root[data-theme="dark"] .markdown-body h1,
+:root[data-theme="dark"] .markdown-body h2,
+:root[data-theme="dark"] .markdown-body h3,
+:root[data-theme="dark"] .markdown-body h4,
+:root[data-theme="dark"] .markdown-body h5,
+:root[data-theme="dark"] .markdown-body h6 {
+  color: #f0e8d8;
+}
+:root[data-theme="dark"] .markdown-body code {
+  background: #3a2f24;
+  color: #f0e8d8;
+}

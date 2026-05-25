@@ -17,6 +17,15 @@ const electronAPI = {
   maximizeWindow: () => ipcRenderer.send('window:maximize'),
   closeWindow: () => ipcRenderer.send('window:close'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+  // electron-store 存储
+  storeGet: (key: string) => ipcRenderer.invoke('store:get', key),
+  storeSet: (key: string, value: any) => ipcRenderer.invoke('store:set', key, value),
+  storeDelete: (key: string) => ipcRenderer.invoke('store:delete', key),
+  // 窗口大小记忆
+  getWindowBounds: () => ipcRenderer.invoke('store:get-window-bounds'),
+  setWindowBounds: (bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke('store:set-window-bounds', bounds),
+  getWindowMaximized: () => ipcRenderer.invoke('store:get-window-maximized'),
+  setWindowMaximized: (val: boolean) => ipcRenderer.invoke('store:set-window-maximized', val),
   // AI API 非流式（Function Calling 阶段用）
   aiChat: (params: {
     apiUrl: string; apiKey: string; model: string
@@ -59,6 +68,16 @@ const electronAPI = {
     ipcRenderer.on('ai:chat-stream-error', errorHandler)
 
     return cleanup
+  },
+  // 自动更新：监听主进程通知
+  onUpdateAvailable: (callback: (data: { latest: string; current: string; releasesUrl: string }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, data: { latest: string; current: string; releasesUrl: string }) => {
+      callback(data)
+    }
+    ipcRenderer.on('update:available', handler)
+    return () => {
+      ipcRenderer.removeListener('update:available', handler)
+    }
   },
 }
 

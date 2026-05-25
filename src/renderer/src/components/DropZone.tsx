@@ -167,7 +167,7 @@ export default function DropZone({ onFileLoaded, history, onClearHistory }: Drop
               fontWeight: 'bold',
               color: '#725d42',
             }}>
-              <Icon name="icon-diary" size={18} />
+              <Icon name="icon-diy" size={18} />
               最近打开
             </div>
             <Button type="text" size="small" onClick={onClearHistory}>

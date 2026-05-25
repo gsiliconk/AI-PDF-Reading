@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Button, Input, Card, Icon, Modal } from 'animal-island-ui'
+import { Button, Input, Card, Icon } from 'animal-island-ui'
 import ReactMarkdown from 'react-markdown'
 import { useResizable } from '../hooks/useResizable'
+import { useSettings } from '../hooks/useSettings'
 import * as pdfjsLib from 'pdfjs-dist'
 import { PDF_TOOLS, executeTool } from '../services/pdfSkills'
 
@@ -17,17 +18,17 @@ interface AIPanelProps {
   onToggle: () => void
   pdfDocument: pdfjsLib.PDFDocumentProxy | null
   currentPage: number
+  onOpenSettings?: () => void
 }
-export default function AIPanel({ isOpen, onToggle, pdfDocument, currentPage }: AIPanelProps) {
+export default function AIPanel({ isOpen, onToggle, pdfDocument, currentPage, onOpenSettings }: AIPanelProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [showApiKey, setShowApiKey] = useState(false)
-  const [apiKey, setApiKey] = useState(localStorage.getItem('ai-api-key') || '')
-  const [apiUrl, setApiUrl] = useState(localStorage.getItem('ai-api-url') || 'https://api.openai.com/v1')
-  const [modelName, setModelName] = useState(localStorage.getItem('ai-model') || 'gpt-4o')
   const [toolStatus, setToolStatus] = useState('')
+  const { settings } = useSettings()
+  const apiKey = settings.aiApiKey
+  const apiUrl = settings.aiApiUrl
+  const modelName = settings.aiModel
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const { width: panelWidth, setContainerRef, resizeHandle } = useResizable({
     initialWidth: 360,
@@ -41,13 +42,6 @@ export default function AIPanel({ isOpen, onToggle, pdfDocument, currentPage }: 
   }, [])
 
   useEffect(() => { scrollToBottom() }, [messages, scrollToBottom])
-
-  const handleSaveSettings = useCallback(() => {
-    localStorage.setItem('ai-api-key', apiKey)
-    localStorage.setItem('ai-api-url', apiUrl)
-    localStorage.setItem('ai-model', modelName)
-    setSettingsOpen(false)
-  }, [apiKey, apiUrl, modelName])
 
   const handleCopyMessage = useCallback((content: string) => {
     navigator.clipboard.writeText(content)
@@ -88,7 +82,6 @@ export default function AIPanel({ isOpen, onToggle, pdfDocument, currentPage }: 
         ...messages.slice(-10).map(m => ({ role: m.role, content: m.content })),
         { role: 'user', content: userMessage.content },
       ]
-
       const tools = pdfDocument ? PDF_TOOLS : undefined
 
       // Function Calling 循环：最多执行 5 轮工具调用
@@ -107,7 +100,7 @@ export default function AIPanel({ isOpen, onToggle, pdfDocument, currentPage }: 
         }
 
         // 有 tool_calls，执行工具
-        apiMessages.push({ role: 'assistant', content: null, tool_calls: response.tool_calls })
+        apiMessages.push({ role: 'assistant', content: '', tool_calls: response.tool_calls })
 
         for (const tc of response.tool_calls) {
           const name = tc.function.name
@@ -136,12 +129,7 @@ export default function AIPanel({ isOpen, onToggle, pdfDocument, currentPage }: 
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }, [handleSend])
 
-  const quickCommands = [
-    { label: '总结全文', prompt: '请帮我总结这篇文档的主要内容' },
-    { label: '提取要点', prompt: '请提取这篇文档的关键要点' },
-    { label: '查看目录', prompt: '请显示这篇文档的目录结构' },
-    { label: '翻译当前页', prompt: '请将当前页面的内容翻译为中文' },
-  ]
+  const quickCommands = settings.quickCommands
 
   if (!isOpen) {
     return (
@@ -179,9 +167,11 @@ export default function AIPanel({ isOpen, onToggle, pdfDocument, currentPage }: 
           </div>
           <div style={{ display: 'flex', gap: '4px' }}>
             <Button type="text" size="small" onClick={handleClearMessages} title="清空对话">🗑</Button>
-            <Button type="text" size="small" onClick={() => setSettingsOpen(true)} title="设置">
-              <Icon name="icon-diy" size={14} />
-            </Button>
+            {onOpenSettings && (
+              <Button type="text" size="small" onClick={onOpenSettings} title="设置">
+                <Icon name="icon-diy" size={14} />
+              </Button>
+            )}
             <Button type="text" size="small" onClick={onToggle}>✕</Button>
           </div>
         </div>
@@ -274,30 +264,6 @@ export default function AIPanel({ isOpen, onToggle, pdfDocument, currentPage }: 
         </div>
       </Card>
       </div>
-
-      {/* 设置弹窗 */}
-      <Modal open={settingsOpen} title="AI 设置" onClose={() => setSettingsOpen(false)} onOk={handleSaveSettings}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: '#725d42' }}>API 地址</label>
-            <Input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="https://api.openai.com/v1" />
-          </div>
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: '#725d42' }}>API Key</label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <Input type={showApiKey ? 'text' : 'password'} value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." style={{ flex: 1 }} />
-              <Button type="default" onClick={() => setShowApiKey(!showApiKey)}>
-                {showApiKey ? '🙈' : '👁'}
-              </Button>
-            </div>
-          </div>
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: '#725d42' }}>模型名称</label>
-            <Input value={modelName} onChange={(e) => setModelName(e.target.value)} placeholder="gpt-4o" />
-          </div>
-        </div>
-      </Modal>
     </>
   )
 }

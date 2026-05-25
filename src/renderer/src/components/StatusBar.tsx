@@ -56,7 +56,7 @@ export default function StatusBar({ currentPage, totalPages, fileName }: StatusB
         alignItems: 'center',
         gap: '8px',
       }}>
-        <Icon name="icon-diary" size={16} />
+        <Icon name="icon-diy" size={16} />
         <span style={{
           fontSize: '13px',
           color: '#9f927d',
