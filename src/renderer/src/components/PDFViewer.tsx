@@ -53,6 +53,8 @@ export default function PDFViewer({
   const programmaticTimerRef = useRef<NodeJS.Timeout | null>(null)
   // 用 ref 记录上次跳转的 currentPage，避免 currentPage 之外的 state 变化触发重复跳转
   const lastJumpedPageRef = useRef<number>(0)
+  // 标记页码变化是否由滚动检测触发（区分自然滚动 vs 大纲/缩略图点击）
+  const scrollDetectedRef = useRef(false)
 
   const [searchMatches, setSearchMatches] = useState<SearchMatch[]>([])
   const [pageSizes, setPageSizes] = useState<Map<number, { width: number; height: number }>>(new Map())
@@ -248,7 +250,10 @@ export default function PDFViewer({
           const pageBottom = pageTop + rect.height
           if (scrollCenter >= pageTop && scrollCenter < pageBottom) {
             const pageNum = parseInt(page.getAttribute('data-page') || '0')
-            if (pageNum > 0 && pageNum !== currentPage) onPageChange(pageNum)
+            if (pageNum > 0 && pageNum !== currentPage) {
+              scrollDetectedRef.current = true
+              onPageChange(pageNum)
+            }
             break
           }
         }
@@ -262,9 +267,15 @@ export default function PDFViewer({
   }, [pdfDocument, currentPage, onPageChange])
 
   // 大纲/缩略图点击时自动滚动 —— 只在 currentPage 真正改变时执行
+  // 自然滚动触发的页码变化不跳转（scrollDetectedRef = true 时跳过）
   useEffect(() => {
     if (lastJumpedPageRef.current === currentPage) return
     lastJumpedPageRef.current = currentPage
+
+    if (scrollDetectedRef.current) {
+      scrollDetectedRef.current = false
+      return
+    }
 
     const container = containerRef.current
     if (!container) return
