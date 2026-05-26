@@ -320,7 +320,7 @@ export function ShortcutsTab() {
 
 // ============== 关于 Tab ==============
 export function AboutTab() {
-  const version = '1.2.0'
+  const version = '1.2.2'
   const githubUrl = 'https://github.com/gsiliconk/AI-PDF-Reading'
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '24px 0', gap: '12px' }}>
