@@ -5,10 +5,6 @@
 </p>
 
 <p align="center">
-  <img src="screenshots/zhanshi.png" alt="PDF Smart Reader 界面" width="800">
-</p>
-
-<p align="center">
   <strong>带 AI 助手的桌面 PDF 阅读器</strong>
 </p>
 
@@ -68,6 +64,8 @@ npm run build:win
 ## 功能特性
 
 ### PDF 阅读
+
+![软件界面](./screenshots/zhanshi.png)
 
 - **多标签页**：同时打开多个 PDF 文件，Ctrl+Tab 切换
 - **文件拖拽**：直接拖拽文件到窗口打开
