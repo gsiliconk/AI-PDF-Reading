@@ -1,7 +1,7 @@
 # PDF Smart Reader
 
 <p align="center">
-  <img src="build/icon.ico" width="128" height="128" alt="PDF Smart Reader">
+  <img src="screenshots/zhanshi.png" alt="PDF Smart Reader 界面" width="800">
 </p>
 
 <p align="center">
