@@ -147,6 +147,8 @@ export default function AnnotationLayer({
     if (selectedTool === 'note') {
       setEditingNote('new')
       setNoteText('')
+      setIsDrawing(false)
+      return
     } else if (currentAnnotation.width && currentAnnotation.width > 5) {
       if (annotations.length >= perPageLimit) {
         // 超过单页上限，提示并取消
@@ -251,13 +253,17 @@ export default function AnnotationLayer({
       return (
         <div key={annotation.id} style={{
           ...style,
+          width: 'auto',
+          height: 'auto',
+          minWidth: '120px',
+          maxWidth: '220px',
           background: '#f8f8f0',
           border: selectedTool === 'delete' ? `2px dashed red` : `2px solid ${annotation.color}`,
           borderRadius: '12px',
           padding: '8px',
           fontSize: '12px',
           color: '#725d42',
-          overflow: 'auto',
+          wordBreak: 'break-word',
         }}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => handleAnnotationClick(e, annotation.id)}
@@ -317,6 +323,7 @@ export default function AnnotationLayer({
           zIndex: 40,
         }}
           onMouseDown={(e) => e.stopPropagation()}
+          onMouseUp={(e) => e.stopPropagation()}
         >
           <Card style={{ padding: '12px', width: '220px' }}>
             <div style={{ fontSize: '12px', color: '#9f927d', marginBottom: '6px' }}>输入批注内容</div>
