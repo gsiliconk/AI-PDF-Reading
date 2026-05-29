@@ -14,6 +14,7 @@ import type { AnnotationTool } from './components/AnnotationToolbar'
 import SettingsModal from './components/SettingsModal'
 import UpdateModal from './components/UpdateModal'
 import { useSettings } from './hooks/useSettings'
+import { hashFilePath } from './utils/hash'
 import * as pdfjsLib from 'pdfjs-dist'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
@@ -31,6 +32,9 @@ export interface HistoryItem {
   lastOpened: number
 }
 
+const HISTORY_KEY = 'pdf-history'
+const READING_POSITION_KEY = 'reading-position'
+
 export default function App() {
   const { settings, updateSettings, loaded: settingsLoaded } = useSettings()
   const [tabs, setTabs] = useState<Tab[]>([])
@@ -38,13 +42,7 @@ export default function App() {
   const [pdfDocuments, setPdfDocuments] = useState<Map<string, pdfjsLib.PDFDocumentProxy>>(new Map())
   const [pdfDataMap, setPdfDataMap] = useState<Map<string, Uint8Array>>(new Map())
   const loadedDocsRef = useRef<Set<string>>(new Set())
-  const [history, setHistory] = useState<HistoryItem[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('pdf-history') || '[]')
-    } catch {
-      return []
-    }
-  })
+  const [history, setHistory] = useState<HistoryItem[]>([])
 
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
@@ -68,12 +66,41 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<{ latest: string; current: string; releasesUrl: string } | null>(null)
   const [updateModalOpen, setUpdateModalOpen] = useState(false)
+  const restoringPositionRef = useRef(false)
 
   const activePdfDocument = activeTabId ? pdfDocuments.get(activeTabId) || null : null
   const activePdfData = activeTabId ? pdfDataMap.get(activeTabId) || null : null
   const activeFileName = tabs.find(t => t.id === activeTabId)?.fileName || ''
   const activeFilePath = tabs.find(t => t.id === activeTabId)?.filePath || ''
   const hasActivePdf = !!activePdfDocument
+
+  useEffect(() => {
+    let cancelled = false
+    const loadHistory = async () => {
+      try {
+        const saved = await window.electronAPI.storeGet(HISTORY_KEY)
+        if (cancelled) return
+        if (Array.isArray(saved)) {
+          setHistory(saved as HistoryItem[])
+          return
+        }
+
+        // 兼容旧版本：从 localStorage 迁移一次最近打开记录
+        const legacy = localStorage.getItem(HISTORY_KEY)
+        if (!legacy) return
+        const parsed = JSON.parse(legacy)
+        if (Array.isArray(parsed)) {
+          setHistory(parsed as HistoryItem[])
+          await window.electronAPI.storeSet(HISTORY_KEY, parsed)
+          localStorage.removeItem(HISTORY_KEY)
+        }
+      } catch (error) {
+        console.error('加载最近打开记录失败:', error)
+      }
+    }
+    loadHistory()
+    return () => { cancelled = true }
+  }, [])
 
   // 保存历史记录
   const saveHistory = useCallback((filePath: string, fileName: string) => {
@@ -84,7 +111,9 @@ export default function App() {
         { filePath, fileName, lastOpened: Date.now() },
         ...filtered,
       ].slice(0, limit)
-      localStorage.setItem('pdf-history', JSON.stringify(newHistory))
+      window.electronAPI.storeSet(HISTORY_KEY, newHistory).catch(error => {
+        console.error('保存最近打开记录失败:', error)
+      })
       return newHistory
     })
   }, [settings.historyLimit])
@@ -92,7 +121,9 @@ export default function App() {
   // 清空历史记录
   const clearHistory = useCallback(() => {
     setHistory([])
-    localStorage.removeItem('pdf-history')
+    window.electronAPI.storeDelete(HISTORY_KEY).catch(error => {
+      console.error('清空最近打开记录失败:', error)
+    })
   }, [])
 
   // 设置首次加载完成时，应用默认面板状态与默认颜色（仅一次）
@@ -151,6 +182,38 @@ export default function App() {
     setPdfDataMap(prev => new Map(prev).set(tabId, pdfData))
     setCurrentPage(1)
   }, [tabs])
+
+  useEffect(() => {
+    if (!settingsLoaded || !settings.rememberPosition) return
+    if (!activeFilePath || !activePdfDocument) return
+
+    let cancelled = false
+    const restoreReadingPosition = async () => {
+      try {
+        const hash = await hashFilePath(activeFilePath)
+        const saved = await window.electronAPI.storeGet(`${READING_POSITION_KEY}.${hash}`)
+        if (cancelled || !saved || typeof saved !== 'object') return
+        const page = Number((saved as any).page)
+        const savedScale = Number((saved as any).scale)
+
+        restoringPositionRef.current = true
+        if (Number.isFinite(savedScale) && savedScale >= 0.5 && savedScale <= 4) {
+          setScale(savedScale)
+        }
+        if (Number.isInteger(page) && page >= 1 && page <= activePdfDocument.numPages) {
+          setCurrentPage(page)
+        }
+        requestAnimationFrame(() => {
+          restoringPositionRef.current = false
+        })
+      } catch (error) {
+        console.error('恢复阅读位置失败:', error)
+        restoringPositionRef.current = false
+      }
+    }
+    restoreReadingPosition()
+    return () => { cancelled = true }
+  }, [activeFilePath, activePdfDocument, settingsLoaded, settings.rememberPosition])
 
   useEffect(() => {
     if (!activeTabId || !activePdfData) return
@@ -238,6 +301,27 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('pdf-zoom', String(scale))
   }, [scale])
+
+  useEffect(() => {
+    if (!settingsLoaded || !settings.rememberPosition) return
+    if (!activeFilePath || !activePdfDocument) return
+    if (restoringPositionRef.current) return
+
+    const timer = setTimeout(async () => {
+      try {
+        const hash = await hashFilePath(activeFilePath)
+        await window.electronAPI.storeSet(`${READING_POSITION_KEY}.${hash}`, {
+          page: currentPage,
+          scale,
+          updatedAt: Date.now(),
+        })
+      } catch (error) {
+        console.error('保存阅读位置失败:', error)
+      }
+    }, 200)
+
+    return () => clearTimeout(timer)
+  }, [activeFilePath, activePdfDocument, currentPage, scale, settingsLoaded, settings.rememberPosition])
 
   // PDF 加载且 pageBaseSize 就绪时，应用 settings.zoom 默认缩放（仅首次）
   useEffect(() => {
