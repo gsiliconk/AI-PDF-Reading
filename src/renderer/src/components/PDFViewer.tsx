@@ -46,11 +46,14 @@ export default function PDFViewer({
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map())
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+  const textLayerRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+  const linkLayerRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const renderingPages = useRef<Set<number>>(new Set())
   const observerRef = useRef<IntersectionObserver | null>(null)
   const scrollTimerRef = useRef<NodeJS.Timeout | null>(null)
   const programmaticTargetRef = useRef<number | null>(null)
   const programmaticTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const currentPageRef = useRef(currentPage)
   // 用 ref 记录上次跳转的 currentPage，避免 currentPage 之外的 state 变化触发重复跳转
   const lastJumpedPageRef = useRef<number>(0)
   // 标记页码变化是否由滚动检测触发（区分自然滚动 vs 大纲/缩略图点击）
@@ -59,10 +62,115 @@ export default function PDFViewer({
   const [searchMatches, setSearchMatches] = useState<SearchMatch[]>([])
   const [pageSizes, setPageSizes] = useState<Map<number, { width: number; height: number }>>(new Map())
 
-  // 文本选择状态
-  const [selRect, setSelRect] = useState<{ x: number; y: number; w: number; h: number; page: number } | null>(null)
-  const selStart = useRef<{ x: number; y: number } | null>(null)
-  const selDragging = useRef(false)
+  useEffect(() => {
+    currentPageRef.current = currentPage
+  }, [currentPage])
+
+  const renderTextLayer = useCallback(async (
+    page: pdfjsLib.PDFPageProxy,
+    viewport: pdfjsLib.PageViewport,
+    host: HTMLDivElement,
+  ) => {
+    const textContent = await page.getTextContent()
+    host.replaceChildren()
+
+    const fragment = document.createDocumentFragment()
+    for (const item of textContent.items as any[]) {
+      if (!item?.str) continue
+      const tx = pdfjsLib.Util.transform(viewport.transform, item.transform)
+      const angle = Math.atan2(tx[1], tx[0])
+      const fontHeight = Math.max(1, Math.hypot(tx[2], tx[3]))
+      const width = Math.max(1, item.width * viewport.scale)
+
+      const span = document.createElement('span')
+      span.textContent = item.str
+      span.style.position = 'absolute'
+      span.style.left = `${tx[4]}px`
+      span.style.top = `${tx[5] - fontHeight}px`
+      span.style.width = `${width}px`
+      span.style.height = `${fontHeight}px`
+      span.style.fontSize = `${fontHeight}px`
+      span.style.lineHeight = '1'
+      span.style.fontFamily = 'sans-serif'
+      span.style.whiteSpace = 'pre'
+      span.style.color = 'transparent'
+      span.style.userSelect = selectedTool ? 'none' : 'text'
+      span.style.cursor = selectedTool ? 'default' : 'text'
+      span.style.transformOrigin = 'left top'
+      span.style.transform = `rotate(${angle}rad)`
+      fragment.appendChild(span)
+    }
+    host.appendChild(fragment)
+  }, [selectedTool])
+
+  const jumpToAnnotationDest = useCallback(async (dest: any) => {
+    if (!pdfDocument) return
+    try {
+      let pageIndex = -1
+      if (typeof dest === 'string') {
+        const destination = await pdfDocument.getDestination(dest)
+        if (destination) {
+          const [pageRef] = destination
+          pageIndex = typeof pageRef === 'number' ? pageRef : await pdfDocument.getPageIndex(pageRef)
+        }
+      } else if (Array.isArray(dest)) {
+        const [pageRef] = dest
+        pageIndex = typeof pageRef === 'number' ? pageRef : await pdfDocument.getPageIndex(pageRef)
+      }
+      if (pageIndex >= 0) onPageChange(pageIndex + 1)
+    } catch (error) {
+      console.error('链接跳转失败:', error)
+    }
+  }, [pdfDocument, onPageChange])
+
+  const renderLinkLayer = useCallback(async (
+    page: pdfjsLib.PDFPageProxy,
+    viewport: pdfjsLib.PageViewport,
+    host: HTMLDivElement,
+  ) => {
+    const annotations = await page.getAnnotations({ intent: 'display' })
+    host.replaceChildren()
+
+    const fragment = document.createDocumentFragment()
+    for (const annotation of annotations as any[]) {
+      if (annotation.subtype !== 'Link' || !Array.isArray(annotation.rect)) continue
+      const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(annotation.rect)
+      const left = Math.min(x1, x2)
+      const top = Math.min(y1, y2)
+      const width = Math.abs(x2 - x1)
+      const height = Math.abs(y2 - y1)
+      if (width < 1 || height < 1) continue
+
+      const link = document.createElement('a')
+      link.style.position = 'absolute'
+      link.style.left = `${left}px`
+      link.style.top = `${top}px`
+      link.style.width = `${width}px`
+      link.style.height = `${height}px`
+      link.style.cursor = selectedTool ? 'default' : 'pointer'
+      link.style.background = 'transparent'
+      link.style.pointerEvents = selectedTool ? 'none' : 'auto'
+      link.title = annotation.url || annotation.unsafeUrl || 'PDF 链接'
+
+      const externalUrl = annotation.url || annotation.unsafeUrl
+      if (externalUrl) {
+        link.href = externalUrl
+        link.target = '_blank'
+        link.rel = 'noreferrer noopener'
+      } else if (annotation.dest) {
+        link.href = '#'
+        link.addEventListener('click', (event) => {
+          event.preventDefault()
+          void jumpToAnnotationDest(annotation.dest)
+        })
+      } else {
+        continue
+      }
+
+      fragment.appendChild(link)
+    }
+    host.appendChild(fragment)
+  }, [jumpToAnnotationDest, selectedTool])
 
   // 懒加载页面尺寸：当前页 ±5 页
   useEffect(() => {
@@ -88,6 +196,8 @@ export default function PDFViewer({
   const renderPage = useCallback(async (pageNum: number) => {
     if (!pdfDocument || renderingPages.current.has(pageNum)) return
     const canvas = canvasRefs.current.get(pageNum)
+    const textLayerHost = textLayerRefs.current.get(pageNum)
+    const linkLayerHost = linkLayerRefs.current.get(pageNum)
     if (!canvas) return
     renderingPages.current.add(pageNum)
     try {
@@ -102,6 +212,15 @@ export default function PDFViewer({
       const ctx = canvas.getContext('2d')!
       ctx.clearRect(0, 0, canvas.width, canvas.height)
       await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise
+
+      if (textLayerHost) {
+        await renderTextLayer(page, viewport, textLayerHost)
+      }
+
+      if (linkLayerHost) {
+        await renderLinkLayer(page, viewport, linkLayerHost)
+      }
+
       // 渲染完成后更新真实尺寸
       setPageSizes(prev => {
         if (prev.has(pageNum)) return prev
@@ -114,7 +233,7 @@ export default function PDFViewer({
     } finally {
       renderingPages.current.delete(pageNum)
     }
-  }, [pdfDocument, scale])
+  }, [pdfDocument, renderLinkLayer, renderTextLayer, scale])
 
   useEffect(() => {
     if (!pdfDocument || !containerRef.current) return
@@ -150,105 +269,26 @@ export default function PDFViewer({
     return () => container.removeEventListener('wheel', handleWheel)
   }, [scale, onScaleChange])
 
-  // 文本选择（仅在无标注工具时生效）
-  useEffect(() => {
-    const container = containerRef.current
-    if (!container || selectedTool) return
-    const getPos = (e: MouseEvent) => {
-      const rect = container.getBoundingClientRect()
-      return { x: e.clientX - rect.left + container.scrollLeft, y: e.clientY - rect.top + container.scrollTop }
-    }
-    const onMouseDown = (e: MouseEvent) => {
-      if (e.button !== 0) return
-      selStart.current = getPos(e)
-      selDragging.current = true
-      setSelRect(null)
-    }
-    const onMouseMove = (e: MouseEvent) => {
-      if (!selDragging.current || !selStart.current) return
-      const cur = getPos(e)
-      const x = Math.min(selStart.current.x, cur.x)
-      const y = Math.min(selStart.current.y, cur.y)
-      const w = Math.abs(cur.x - selStart.current.x)
-      const h = Math.abs(cur.y - selStart.current.y)
-      if (w > 5 || h > 5) {
-        // 找到选区所在的页
-        const pages = container.querySelectorAll('[data-page]')
-        for (const page of pages) {
-          const pr = page.getBoundingClientRect()
-          const pTop = pr.top - container.getBoundingClientRect().top + container.scrollTop
-          const pBottom = pTop + pr.height
-          if (y >= pTop && y < pBottom) {
-            const pageNum = parseInt(page.getAttribute('data-page') || '0')
-            setSelRect({ x: x - (pr.left - container.getBoundingClientRect().left + container.scrollLeft), y: y - pTop, w, h, page: pageNum })
-            break
-          }
-        }
-      }
-    }
-    const onMouseUp = () => { selDragging.current = false }
-    container.addEventListener('mousedown', onMouseDown)
-    container.addEventListener('mousemove', onMouseMove)
-    container.addEventListener('mouseup', onMouseUp)
-    return () => {
-      container.removeEventListener('mousedown', onMouseDown)
-      container.removeEventListener('mousemove', onMouseMove)
-      container.removeEventListener('mouseup', onMouseUp)
-    }
-  }, [selectedTool])
-
-  // Ctrl+C 复制选区文字
-  useEffect(() => {
-    if (!pdfDocument) return
-    const handleCopy = async (e: ClipboardEvent) => {
-      if (!selRect || selRect.w < 5 || selRect.h < 5) return
-      try {
-        const page = await pdfDocument.getPage(selRect.page)
-        const viewport = page.getViewport({ scale })
-        const textContent = await page.getTextContent()
-        const parts: string[] = []
-        for (const item of textContent.items as any[]) {
-          if (!item.str) continue
-          const tx = pdfjsLib.Util.transform(viewport.transform, item.transform)
-          const itemX = tx[4]
-          const itemY = tx[5] - item.height * scale
-          const itemW = item.width * scale
-          const itemH = item.height * scale
-          const ox = Math.max(0, Math.min(itemX + itemW, selRect.x + selRect.w) - Math.max(itemX, selRect.x))
-          const oy = Math.max(0, Math.min(itemY + itemH, selRect.y + selRect.h) - Math.max(itemY, selRect.y))
-          if (ox > 0 && oy > 0 && (ox * oy) / (itemW * itemH) > 0.3) {
-            parts.push(item.str)
-          }
-        }
-        if (parts.length > 0) {
-          e.preventDefault()
-          const text = parts.join(' ')
-          e.clipboardData?.setData('text/plain', text)
-        }
-      } catch { /* skip */ }
-      setSelRect(null)
-    }
-    document.addEventListener('copy', handleCopy)
-    return () => document.removeEventListener('copy', handleCopy)
-  }, [pdfDocument, scale, selRect])
-
   // 滚动时更新页码
   useEffect(() => {
     const container = containerRef.current
     if (!container || !pdfDocument) return
+    const isHorizontal = scrollDirection === 'horizontal'
     const handleScroll = () => {
       if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current)
       scrollTimerRef.current = setTimeout(() => {
         if (programmaticTargetRef.current !== null) return
-        const scrollTop = container.scrollTop
-        const scrollCenter = scrollTop + container.clientHeight / 3
+        const scrollOffset = isHorizontal ? container.scrollLeft : container.scrollTop
+        const scrollCenter = scrollOffset + (isHorizontal ? container.clientWidth : container.clientHeight) / 3
         const pages = container.querySelectorAll('[data-page]')
         for (const page of pages) {
           const rect = page.getBoundingClientRect()
           const containerRect = container.getBoundingClientRect()
-          const pageTop = rect.top - containerRect.top + scrollTop
-          const pageBottom = pageTop + rect.height
-          if (scrollCenter >= pageTop && scrollCenter < pageBottom) {
+          const pageStart = isHorizontal
+            ? rect.left - containerRect.left + container.scrollLeft
+            : rect.top - containerRect.top + container.scrollTop
+          const pageEnd = pageStart + (isHorizontal ? rect.width : rect.height)
+          if (scrollCenter >= pageStart && scrollCenter < pageEnd) {
             const pageNum = parseInt(page.getAttribute('data-page') || '0')
             if (pageNum > 0 && pageNum !== currentPage) {
               scrollDetectedRef.current = true
@@ -264,7 +304,7 @@ export default function PDFViewer({
       container.removeEventListener('scroll', handleScroll)
       if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current)
     }
-  }, [pdfDocument, currentPage, onPageChange])
+  }, [pdfDocument, currentPage, onPageChange, scrollDirection])
 
   // 大纲/缩略图点击时自动滚动 —— 只在 currentPage 真正改变时执行
   // 自然滚动触发的页码变化不跳转（scrollDetectedRef = true 时跳过）
@@ -287,12 +327,16 @@ export default function PDFViewer({
 
     const containerRect = container.getBoundingClientRect()
     const pageRect = pageElement.getBoundingClientRect()
-    container.scrollTop = pageRect.top - containerRect.top + container.scrollTop - 24
+    if (scrollDirection === 'horizontal') {
+      container.scrollLeft = pageRect.left - containerRect.left + container.scrollLeft - 24
+    } else {
+      container.scrollTop = pageRect.top - containerRect.top + container.scrollTop - 24
+    }
 
     programmaticTimerRef.current = setTimeout(() => {
       programmaticTargetRef.current = null
     }, 100)
-  }, [currentPage])
+  }, [currentPage, scrollDirection])
 
   // 搜索
   useEffect(() => {
@@ -352,13 +396,17 @@ export default function PDFViewer({
           if (!pageElement) return
           const containerRect = container.getBoundingClientRect()
           const pageRect = pageElement.getBoundingClientRect()
-          container.scrollTop = pageRect.top - containerRect.top + container.scrollTop + rect.y - container.clientHeight / 3
+          if (scrollDirection === 'horizontal') {
+            container.scrollLeft = pageRect.left - containerRect.left + container.scrollLeft + rect.x - container.clientWidth / 3
+          } else {
+            container.scrollTop = pageRect.top - containerRect.top + container.scrollTop + rect.y - container.clientHeight / 3
+          }
           programmaticTimerRef.current = setTimeout(() => { programmaticTargetRef.current = null }, 100)
         })
         break
       }
     }
-  }, [searchMatchIndex, searchMatches, onPageChange])
+  }, [searchMatchIndex, searchMatches, onPageChange, scrollDirection])
 
   const getPageHighlights = (pageNum: number) => {
     if (!searchQuery.trim()) return []
@@ -402,16 +450,18 @@ export default function PDFViewer({
       style={{
         width: '100%', height: '100%', overflow: 'auto',
         background: 'var(--animal-bg-color-secondary)',
-        cursor: selectedTool ? 'crosshair' : 'text',
+        cursor: selectedTool ? 'crosshair' : 'auto',
       }}
     >
         <div style={{
-          display: 'flex',
+          display: 'inline-flex',
           flexDirection: isHorizontal ? 'row' : 'column',
-          alignItems: 'center',
+          alignItems: isHorizontal ? 'flex-start' : 'center',
+          justifyContent: 'flex-start',
           padding: '24px', gap: '20px',
           minHeight: isHorizontal ? '100%' : undefined,
-          minWidth: isHorizontal ? '100%' : undefined,
+          width: 'fit-content',
+          minWidth: '100%',
         }}>
           {pageGroups.map((group, gi) => (
             <div
@@ -419,6 +469,7 @@ export default function PDFViewer({
               style={{
                 display: 'flex', flexDirection: 'row', gap: '12px',
                 alignItems: 'flex-start',
+                flexShrink: 0,
               }}
             >
               {group.map(pageNum => (
@@ -450,6 +501,32 @@ export default function PDFViewer({
                   height: pageSizes.get(pageNum) ? `${pageSizes.get(pageNum)!.height}px` : '800px',
                 }}
               />
+              <div
+                ref={(el) => {
+                  if (el) textLayerRefs.current.set(pageNum, el)
+                  else textLayerRefs.current.delete(pageNum)
+                }}
+                style={{
+                  position: 'absolute',
+                  inset: '4px',
+                  overflow: 'hidden',
+                  userSelect: selectedTool ? 'none' : 'text',
+                  pointerEvents: selectedTool ? 'none' : 'auto',
+                  zIndex: 1,
+                }}
+              />
+              <div
+                ref={(el) => {
+                  if (el) linkLayerRefs.current.set(pageNum, el)
+                  else linkLayerRefs.current.delete(pageNum)
+                }}
+                style={{
+                  position: 'absolute',
+                  inset: '4px',
+                  pointerEvents: 'none',
+                  zIndex: 2,
+                }}
+              />
               {/* 搜索高亮层 */}
               {getPageHighlights(pageNum).map((rect, i) => {
                 const isActive = i === getActiveHighlightIndex(pageNum)
@@ -464,17 +541,6 @@ export default function PDFViewer({
                   }} />
                 )
               })}
-              {/* 文本选择层 */}
-              {selRect && selRect.page === pageNum && selRect.w > 5 && selRect.h > 5 && (
-                <div style={{
-                  position: 'absolute',
-                  left: `${selRect.x + 4}px`, top: `${selRect.y + 4}px`,
-                  width: `${selRect.w}px`, height: `${selRect.h}px`,
-                  background: 'rgba(100,149,237,0.25)',
-                  border: '1px solid rgba(100,149,237,0.6)',
-                  borderRadius: '2px', pointerEvents: 'none',
-                }} />
-              )}
               {/* 标注层 */}
               <AnnotationLayer
                 page={pageNum}

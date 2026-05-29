@@ -12,6 +12,9 @@ export interface AppSettings {
   showPageBadge: boolean
   doublePage: boolean
   rememberPosition: boolean
+  toolbarDocked: boolean
+  toolbarOrientation: 'horizontal' | 'vertical'
+  toolbarPosition: { x: number; y: number }
   // 外观
   theme: 'light' | 'dark' | 'system'
   sidebarDefaultOpen: boolean
@@ -35,6 +38,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showPageBadge: true,
   doublePage: false,
   rememberPosition: true,
+  toolbarDocked: false,
+  toolbarOrientation: 'horizontal',
+  toolbarPosition: { x: 16, y: 120 },
   theme: 'light',
   sidebarDefaultOpen: false,
   aiPanelDefaultOpen: false,

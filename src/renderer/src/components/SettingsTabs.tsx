@@ -213,6 +213,16 @@ export function AnnotationTab({ settings, update }: TabProps) {
           ))}
         </div>
       </SettingRow>
+      <SettingRow label="工具条默认排列" description="悬浮或吸附时标注工具条的排列方向">
+        <SelectInput
+          value={settings.toolbarOrientation}
+          options={[
+            { label: '横向', value: 'horizontal' },
+            { label: '纵向', value: 'vertical' },
+          ]}
+          onChange={(v) => update({ toolbarOrientation: v })}
+        />
+      </SettingRow>
 
       <SectionTitle>限制</SectionTitle>
       <SettingRow label="历史记录上限" description="最多保留多少条最近打开的文档">

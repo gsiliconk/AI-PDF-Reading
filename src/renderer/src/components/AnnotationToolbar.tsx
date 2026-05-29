@@ -9,9 +9,14 @@ interface ToolbarContentProps {
   onToolChange: (tool: AnnotationTool) => void
   onColorChange: (color: string) => void
   colorOnLeft?: boolean
+  direction?: 'horizontal' | 'vertical'
 }
 
 interface AnnotationToolbarProps extends ToolbarContentProps {
+  position: { x: number; y: number }
+  orientation: 'horizontal' | 'vertical'
+  onPositionChange: (position: { x: number; y: number }) => void
+  onOrientationChange: (orientation: 'horizontal' | 'vertical') => void
   onDockChange?: (docked: boolean) => void
 }
 
@@ -37,82 +42,158 @@ const DragHandle = () => (
   </div>
 )
 
-const ColorPicker = ({ selectedColor, onColorChange }: { selectedColor: string; onColorChange: (c: string) => void }) => (
+const ColorPicker = ({
+  selectedColor, onColorChange, direction = 'horizontal',
+}: {
+  selectedColor: string
+  onColorChange: (c: string) => void
+  direction?: 'horizontal' | 'vertical'
+}) => (
   <>
-    {COLORS.map(c => (
-      <button
-        key={c.value}
-        onClick={() => onColorChange(c.value)}
-        title={c.name}
-        style={{
-          width: '16px', height: '16px', borderRadius: '50%',
-          background: c.value, padding: 0, cursor: 'pointer', flexShrink: 0,
-          border: selectedColor === c.value ? '2px solid #725d42' : '2px solid transparent',
-          outline: 'none',
-        }}
-      />
-    ))}
-    <div style={{ width: '1px', height: '16px', background: '#e8e2d6', margin: '0 2px', flexShrink: 0 }} />
+    <div style={{
+      display: 'flex',
+      flexDirection: direction === 'vertical' ? 'column' : 'row',
+      alignItems: 'center',
+      gap: '4px',
+    }}>
+      {COLORS.map(c => (
+        <button
+          key={c.value}
+          onClick={() => onColorChange(c.value)}
+          title={c.name}
+          style={{
+            width: '16px', height: '16px', borderRadius: '50%',
+            background: c.value, padding: 0, cursor: 'pointer', flexShrink: 0,
+            border: selectedColor === c.value ? '2px solid #725d42' : '2px solid transparent',
+            outline: 'none',
+          }}
+        />
+      ))}
+    </div>
+    <div style={{
+      width: direction === 'vertical' ? '16px' : '1px',
+      height: direction === 'vertical' ? '1px' : '16px',
+      background: '#e8e2d6',
+      margin: direction === 'vertical' ? '2px 0' : '0 2px',
+      flexShrink: 0,
+    }} />
   </>
 )
 
 export function AnnotationToolbarContent({
-  selectedTool, selectedColor, onToolChange, onColorChange, colorOnLeft = false,
+  selectedTool, selectedColor, onToolChange, onColorChange, colorOnLeft = false, direction = 'horizontal',
 }: ToolbarContentProps) {
   const showColors = selectedTool && selectedTool !== 'delete'
+  const isVertical = direction === 'vertical'
+  const getToolLabel = (tool: Exclude<AnnotationTool, null>) => {
+    if (tool === 'highlight') return '高亮'
+    if (tool === 'underline') return '下划线'
+    return '批注'
+  }
   const toolButtons = (
-    <>
+    <div style={{ display: 'flex', flexDirection: isVertical ? 'column' : 'row', gap: '4px' }}>
       {(['highlight', 'underline', 'note'] as const).map(tool => (
         <Button
           key={tool}
           type={selectedTool === tool ? 'default' : 'primary'}
           size="small"
           onClick={() => onToolChange(selectedTool === tool ? null : tool)}
+          style={isVertical ? {
+            minWidth: '40px',
+            minHeight: tool === 'underline' ? '88px' : '64px',
+            padding: '8px 6px',
+          } : undefined}
         >
-          {tool === 'highlight' ? '高亮' : tool === 'underline' ? '下划线' : '批注'}
+          {isVertical ? (
+            <span style={{
+              writingMode: 'vertical-rl',
+              textOrientation: 'upright',
+              letterSpacing: '2px',
+              lineHeight: 1,
+            }}>
+              {getToolLabel(tool)}
+            </span>
+          ) : getToolLabel(tool)}
         </Button>
       ))}
       <Button
         type={selectedTool === 'delete' ? 'default' : 'primary'}
         size="small"
         onClick={() => onToolChange(selectedTool === 'delete' ? null : 'delete')}
+        style={isVertical ? {
+          minWidth: '40px',
+          minHeight: '64px',
+          padding: '8px 6px',
+        } : undefined}
       >
-        删除
+        {isVertical ? (
+          <span style={{
+            writingMode: 'vertical-rl',
+            textOrientation: 'upright',
+            letterSpacing: '2px',
+            lineHeight: 1,
+          }}>
+            删除
+          </span>
+        ) : '删除'}
       </Button>
-    </>
+    </div>
   )
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-      {showColors && colorOnLeft && <ColorPicker selectedColor={selectedColor} onColorChange={onColorChange} />}
+    <div style={{
+      display: 'flex',
+      flexDirection: isVertical ? 'column' : 'row',
+      alignItems: 'center',
+      gap: '4px',
+    }}>
+      {showColors && colorOnLeft && (
+        <ColorPicker selectedColor={selectedColor} onColorChange={onColorChange} direction={direction} />
+      )}
       {toolButtons}
-      {showColors && !colorOnLeft && <ColorPicker selectedColor={selectedColor} onColorChange={onColorChange} />}
+      {showColors && !colorOnLeft && (
+        <ColorPicker selectedColor={selectedColor} onColorChange={onColorChange} direction={direction} />
+      )}
     </div>
   )
 }
 
 export default function AnnotationToolbar({
-  selectedTool, selectedColor, onToolChange, onColorChange, onDockChange,
+  selectedTool, selectedColor, onToolChange, onColorChange,
+  position, orientation, onPositionChange, onOrientationChange, onDockChange,
 }: AnnotationToolbarProps) {
-  const [pos, setPos] = useState({ x: 16, y: 120 })
   const dragging = useRef(false)
   const dragOffset = useRef({ x: 0, y: 0 })
   const barRef = useRef<HTMLDivElement>(null)
   const DOCK_THRESHOLD = 60
+  const isVertical = orientation === 'vertical'
+  const getMaxX = useCallback(() => {
+    const width = barRef.current?.offsetWidth ?? (isVertical ? 92 : 320)
+    return Math.max(0, window.innerWidth - width)
+  }, [isVertical])
+  const getMaxY = useCallback(() => {
+    const height = barRef.current?.offsetHeight ?? (isVertical ? 260 : 48)
+    return Math.max(0, window.innerHeight - height)
+  }, [isVertical])
+  const clampPosition = useCallback((next: { x: number; y: number }) => ({
+    x: Math.max(0, Math.min(getMaxX(), next.x)),
+    y: Math.max(0, Math.min(getMaxY(), next.y)),
+  }), [getMaxX, getMaxY])
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button')) return
     dragging.current = true
-    dragOffset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y }
+    dragOffset.current = { x: e.clientX - position.x, y: e.clientY - position.y }
     e.preventDefault()
-  }, [pos])
+  }, [position])
 
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
       if (!dragging.current) return
-      const x = Math.max(0, Math.min(window.innerWidth - 320, e.clientX - dragOffset.current.x))
-      const y = Math.max(0, Math.min(window.innerHeight - 48, e.clientY - dragOffset.current.y))
-      setPos({ x, y })
+      onPositionChange(clampPosition({
+        x: e.clientX - dragOffset.current.x,
+        y: e.clientY - dragOffset.current.y,
+      }))
     }
     const onMouseUp = (e: MouseEvent) => {
       if (!dragging.current) return
@@ -126,7 +207,15 @@ export default function AnnotationToolbar({
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseup', onMouseUp)
     }
-  }, [onDockChange])
+  }, [clampPosition, onDockChange, onPositionChange])
+
+  useEffect(() => {
+    const handleResize = () => {
+      onPositionChange(clampPosition(position))
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [clampPosition, onPositionChange, position])
 
   return (
     <div
@@ -134,10 +223,11 @@ export default function AnnotationToolbar({
       onMouseDown={onMouseDown}
       style={{
         position: 'fixed',
-        left: `${pos.x}px`,
-        top: `${pos.y}px`,
+        left: `${position.x}px`,
+        top: `${position.y}px`,
         zIndex: 100,
         display: 'flex',
+        flexDirection: isVertical ? 'column' : 'row',
         alignItems: 'center',
         gap: '6px',
         padding: '6px 10px',
@@ -150,12 +240,30 @@ export default function AnnotationToolbar({
       }}
     >
       <DragHandle />
+      <button
+        onClick={() => onOrientationChange(isVertical ? 'horizontal' : 'vertical')}
+        title={isVertical ? '切换为横向排列' : '切换为纵向排列'}
+        style={{
+          border: 'none',
+          background: '#f8f4ec',
+          color: '#725d42',
+          borderRadius: '8px',
+          padding: '4px 8px',
+          fontSize: '12px',
+          lineHeight: 1.2,
+          cursor: 'pointer',
+          flexShrink: 0,
+        }}
+      >
+        {isVertical ? '横向' : '纵向'}
+      </button>
       <AnnotationToolbarContent
         selectedTool={selectedTool}
         selectedColor={selectedColor}
         onToolChange={onToolChange}
         onColorChange={onColorChange}
-        colorOnLeft={false}
+        colorOnLeft={!isVertical}
+        direction={orientation}
       />
     </div>
   )

@@ -32,7 +32,7 @@ export interface HistoryItem {
 }
 
 export default function App() {
-  const { settings, loaded: settingsLoaded } = useSettings()
+  const { settings, updateSettings, loaded: settingsLoaded } = useSettings()
   const [tabs, setTabs] = useState<Tab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [pdfDocuments, setPdfDocuments] = useState<Map<string, pdfjsLib.PDFDocumentProxy>>(new Map())
@@ -55,6 +55,8 @@ export default function App() {
   const [annotationTool, setAnnotationTool] = useState<AnnotationTool>(null)
   const [annotationColor, setAnnotationColor] = useState('#f5c31c')
   const [toolbarDocked, setToolbarDocked] = useState(false)
+  const [toolbarPosition, setToolbarPosition] = useState({ x: 16, y: 120 })
+  const [toolbarOrientation, setToolbarOrientation] = useState<'horizontal' | 'vertical'>('horizontal')
   const [scale, setScale] = useState(1.5)
   const initialPanelsAppliedRef = useRef(false)
   const initialZoomAppliedRef = useRef(false)
@@ -71,6 +73,7 @@ export default function App() {
   const activePdfData = activeTabId ? pdfDataMap.get(activeTabId) || null : null
   const activeFileName = tabs.find(t => t.id === activeTabId)?.fileName || ''
   const activeFilePath = tabs.find(t => t.id === activeTabId)?.filePath || ''
+  const hasActivePdf = !!activePdfDocument
 
   // 保存历史记录
   const saveHistory = useCallback((filePath: string, fileName: string) => {
@@ -100,8 +103,12 @@ export default function App() {
     setAiPanelOpen(settings.aiPanelDefaultOpen)
     setNotesPanelOpen(settings.notesPanelDefaultOpen)
     setAnnotationColor(settings.highlightDefaultColor)
+    setToolbarDocked(settings.toolbarDocked)
+    setToolbarPosition(settings.toolbarPosition)
+    setToolbarOrientation(settings.toolbarOrientation)
   }, [settingsLoaded, settings.sidebarDefaultOpen, settings.aiPanelDefaultOpen,
-      settings.notesPanelDefaultOpen, settings.highlightDefaultColor])
+      settings.notesPanelDefaultOpen, settings.highlightDefaultColor,
+      settings.toolbarDocked, settings.toolbarOrientation, settings.toolbarPosition])
 
   // 主题应用到 document
   useEffect(() => {
@@ -305,6 +312,21 @@ export default function App() {
     setUpdateModalOpen(false)
   }, [updateInfo])
 
+  const handleToolbarDockChange = useCallback((docked: boolean) => {
+    setToolbarDocked(docked)
+    updateSettings({ toolbarDocked: docked })
+  }, [updateSettings])
+
+  const handleToolbarPositionChange = useCallback((position: { x: number; y: number }) => {
+    setToolbarPosition(position)
+    updateSettings({ toolbarPosition: position })
+  }, [updateSettings])
+
+  const handleToolbarOrientationChange = useCallback((orientation: 'horizontal' | 'vertical') => {
+    setToolbarOrientation(orientation)
+    updateSettings({ toolbarOrientation: orientation })
+  }, [updateSettings])
+
   return (
     <div style={{
       display: 'flex',
@@ -328,7 +350,7 @@ export default function App() {
           flexShrink: 0,
         }}>
           {/* 侧边栏切换 */}
-          {activePdfDocument && (
+          {hasActivePdf && (
             <Button
               type={sidebarOpen ? 'default' : 'primary'}
               size="small"
@@ -357,18 +379,26 @@ export default function App() {
           )}
 
           {/* 标注工具栏吸附区 —— 拖到顶部时显示，放在搜索左边 */}
-          {activePdfDocument && toolbarDocked && (
+          {hasActivePdf && toolbarDocked && (
             <>
               <div style={{ width: '1px', height: '20px', background: '#e8e2d6' }} />
-              <AnnotationToolbarContent
-                selectedTool={annotationTool}
-                selectedColor={annotationColor}
-                onToolChange={setAnnotationTool}
-                onColorChange={setAnnotationColor}
-                colorOnLeft={true}
-              />
+              <div style={{
+                display: 'flex',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: '6px',
+              }}>
+                <AnnotationToolbarContent
+                  selectedTool={annotationTool}
+                  selectedColor={annotationColor}
+                  onToolChange={setAnnotationTool}
+                  onColorChange={setAnnotationColor}
+                  colorOnLeft={true}
+                  direction="horizontal"
+                />
+              </div>
               <button
-                onClick={() => setToolbarDocked(false)}
+                onClick={() => handleToolbarDockChange(false)}
                 title="取消吸附，恢复悬浮"
                 style={{
                   background: 'none', border: 'none', cursor: 'pointer',
@@ -382,7 +412,7 @@ export default function App() {
           )}
 
           {/* 搜索 */}
-          {activePdfDocument && (
+          {hasActivePdf && (
             <Button
               type={searchOpen ? 'default' : 'primary'}
               size="small"
@@ -394,17 +424,19 @@ export default function App() {
           )}
 
           {/* AI 助手 */}
-          <Button
-            type={aiPanelOpen ? 'default' : 'primary'}
-            size="small"
-            onClick={() => setAiPanelOpen(p => !p)}
-            icon={<Icon name="icon-chat" size={16} />}
-          >
-            AI
-          </Button>
+          {hasActivePdf && (
+            <Button
+              type={aiPanelOpen ? 'default' : 'primary'}
+              size="small"
+              onClick={() => setAiPanelOpen(p => !p)}
+              icon={<Icon name="icon-chat" size={16} />}
+            >
+              AI
+            </Button>
+          )}
 
           {/* 笔记 */}
-          {activePdfDocument && (
+          {hasActivePdf && (
             <Button
               type={notesPanelOpen ? 'default' : 'primary'}
               size="small"
@@ -416,7 +448,7 @@ export default function App() {
           )}
 
           {/* 页码显示 */}
-          {activePdfDocument && (
+          {hasActivePdf && (
             <div style={{
               background: '#f0e8d8',
               borderRadius: '16px',
@@ -431,7 +463,7 @@ export default function App() {
           )}
 
           {/* 缩放控制 */}
-          {activePdfDocument && (
+          {hasActivePdf && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
               <Button type="default" size="small" onClick={() => {
                 if (pageBaseSize) setScale(Math.round((window.innerWidth - 40) / pageBaseSize.w * 10) / 10)
@@ -465,7 +497,7 @@ export default function App() {
             pdfDocument={activePdfDocument}
             currentPage={currentPage}
             onPageChange={handlePageChange}
-            isOpen={sidebarOpen}
+            isOpen={hasActivePdf && sidebarOpen}
             onToggle={() => setSidebarOpen(p => !p)}
           />
 
@@ -522,31 +554,39 @@ export default function App() {
           </div>
 
           {/* AI 对话面板 */}
-          <AIPanel
-            isOpen={aiPanelOpen}
-            onToggle={() => setAiPanelOpen(p => !p)}
-            pdfDocument={activePdfDocument}
-            currentPage={currentPage}
-            onOpenSettings={() => setSettingsOpen(true)}
-          />
+          {hasActivePdf && (
+            <AIPanel
+              isOpen={aiPanelOpen}
+              onToggle={() => setAiPanelOpen(p => !p)}
+              pdfDocument={activePdfDocument}
+              currentPage={currentPage}
+              onOpenSettings={() => setSettingsOpen(true)}
+            />
+          )}
 
           {/* 笔记面板 */}
-          <AnnotationPanel
-            isOpen={notesPanelOpen}
-            onToggle={() => setNotesPanelOpen(p => !p)}
-            filePath={activeFilePath}
-            currentPage={currentPage}
-            onPageChange={handlePageChange}
-          />
+          {hasActivePdf && (
+            <AnnotationPanel
+              isOpen={notesPanelOpen}
+              onToggle={() => setNotesPanelOpen(p => !p)}
+              filePath={activeFilePath}
+              currentPage={currentPage}
+              onPageChange={handlePageChange}
+            />
+          )}
 
           {/* 悬浮标注工具条 —— 仅在有 PDF 且未吸附时显示 */}
-          {activePdfDocument && !toolbarDocked && (
+          {hasActivePdf && !toolbarDocked && (
             <AnnotationToolbar
               selectedTool={annotationTool}
               selectedColor={annotationColor}
               onToolChange={setAnnotationTool}
               onColorChange={setAnnotationColor}
-              onDockChange={setToolbarDocked}
+              position={toolbarPosition}
+              orientation={toolbarOrientation}
+              onPositionChange={handleToolbarPositionChange}
+              onOrientationChange={handleToolbarOrientationChange}
+              onDockChange={handleToolbarDockChange}
             />
           )}
         </div>

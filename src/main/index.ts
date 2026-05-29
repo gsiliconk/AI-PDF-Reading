@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron'
 import { join } from 'path'
-import { readFileSync } from 'fs'
+import { mkdirSync, readFileSync } from 'fs'
 import { request as httpsRequest } from 'https'
 import { is } from '@electron-toolkit/utils'
 import Store from 'electron-store'
@@ -8,6 +8,15 @@ import Store from 'electron-store'
 const store = new Store()
 
 let mainWindow: BrowserWindow | null = null
+
+// 显式指定并预创建 sessionData，避免 Chromium 在无权限目录下创建缓存时报错。
+try {
+  const sessionDataPath = join(app.getPath('userData'), 'sessionData')
+  mkdirSync(sessionDataPath, { recursive: true })
+  app.setPath('sessionData', sessionDataPath)
+} catch (error) {
+  console.warn('初始化 sessionData 目录失败，将使用 Electron 默认路径:', error)
+}
 
 function createWindow(): void {
   const savedBounds = store.get('window.bounds') as { x?: number; y?: number; width?: number; height?: number } | undefined
@@ -346,4 +355,3 @@ function checkForUpdates(): void {
     // 静默
   }
 }
-
