@@ -1,37 +1,19 @@
+![PDF Smart Reader — Read. Ask. Understand.](./assets/banner.svg)
+
 # PDF Smart Reader
 
-<p align="center">
-  <img src="build/icon.ico" width="128" height="128" alt="PDF Smart Reader">
-</p>
+![Desktop: Electron](https://img.shields.io/badge/Desktop-Electron-c4b5fd?style=flat-square&labelColor=152238) ![UI: React](https://img.shields.io/badge/UI-React-c4b5fd?style=flat-square&labelColor=152238) ![Language: TypeScript](https://img.shields.io/badge/Language-TypeScript-c4b5fd?style=flat-square&labelColor=152238)
 
-<p align="center">
-  <strong>带 AI 助手的桌面 PDF 阅读器</strong>
-</p>
+[下载安装](https://github.com/gsiliconk/AI-PDF-Reading/releases/latest) · [功能特性](#功能特性) · [开发](#开发) · [路线图](#路线图)
 
-<p align="center">
-  <a href="https://github.com/gsiliconk/AI-PDF-Reading/releases">
-    <img src="https://img.shields.io/github/v/release/gsiliconk/AI-PDF-Reading?style=flat-square" alt="Release">
-  </a>
-  <a href="https://github.com/gsiliconk/AI-PDF-Reading/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/gsiliconk/AI-PDF-Reading?style=flat-square" alt="License">
-  </a>
-</p>
 
 ---
 
 **PDF Smart Reader** 是一款轻量级桌面 PDF 阅读器，内置 AI 对话面板，可以对打开的 PDF 文档进行智能问答、内容总结和关键信息提取。支持 OpenAI 兼容 API，可对接各种大模型服务。
 
-本应用**所有数据保存在本地**，API 配置和历史记录不上传任何第三方服务器。
+API 配置和阅读历史保存在本地。使用 AI 功能时，对话及工具读取的文档文本会发送至你配置的模型服务。
 
-<!-- 截图占位：将截图放到 img/ 目录后取消注释 -->
-<!-- ## 截图
-<table>
-  <tr>
-    <td><img src="./img/1.png" width="400" alt="主界面"></td>
-    <td><img src="./img/2.png" width="400" alt="AI 对话"></td>
-  </tr>
-</table>
--->
+
 
 ## 快速开始
 
@@ -41,7 +23,7 @@
 
 | 平台 | 安装包 |
 |------|--------|
-| Windows | `PDF Smart Reader Setup.exe` |
+| Windows | `PDF-Smart-Reader-Setup.exe` |
 
 下载后双击运行即可，无需额外配置运行环境。
 
